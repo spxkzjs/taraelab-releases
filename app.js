@@ -378,25 +378,29 @@ function writeView() {
 function itemView(s) {
   const acc = S.accounts.find((a) => a.threads_user_id === s.threads_user_id);
   const who = acc ? `@${acc.username}` : "";
-  const label = { scheduled: "예약됨", posting: "올리는 중", posted: "올림", failed: "실패" }[s.status] || s.status;
+  const label = { scheduled: "예약됨", posting: "올리는 중", posted: "올림", failed: "실패", missed: "놓친 예약" }[s.status] || s.status;
+  const pcOnly = s.origin === "mirror"; // PC 오또브가 직접 올리는 예약 (서버는 보여 주기만)
+  const canCancel = s.status === "scheduled" || (pcOnly && (s.status === "failed" || s.status === "missed"));
   const when = s.status === "posted" && s.posted_at ? s.posted_at : s.scheduled_at;
   const thread = (s.thread || []).filter((t) => String(t).trim()).length;
   return h("div", { class: "item" },
     h("div", { class: "head" }, h("span", { class: "time" }, fmt(when)), h("span", { class: "who" }, who), h("span", { class: `badge ${s.status}` }, label)),
     h("p", { class: "text" }, s.body || "(본문 없음)"),
     s.images && s.images.length > 0 && h("div", { class: "thumbs" }, s.images.slice(0, 5).map((u) => h("img", { src: u, alt: "", loading: "lazy" }))),
-    s.status === "failed" && s.error && h("div", { class: "err" }, s.error),
+    (s.status === "failed" || s.status === "missed") && s.error && h("div", { class: "err" }, s.error),
+    pcOnly && s.status === "scheduled" && h("div", { class: "pcnote" }, "PC 오또브가 켜져 있어야 올라가요"),
     h("div", { class: "meta" },
       thread > 0 && h("span", null, `타래 ${thread}`),
       s.images && s.images.length > 0 && h("span", null, `사진 ${s.images.length}`),
       s.origin === "mobile" && h("span", null, "폰에서 씀"),
-      s.status === "scheduled" && h("button", { class: "act cancel", onclick: () => cancel(s) }, "취소"),
+      pcOnly && h("span", null, "💻 PC 예약"),
+      canCancel && h("button", { class: "act cancel", onclick: () => cancel(s) }, "취소"),
       s.status === "posted" && s.permalink && h("a", { class: "act", href: s.permalink, target: "_blank", rel: "noopener" }, "스레드에서 보기")));
 }
 
 function listView() {
   const up = S.schedules.filter((s) => s.status === "scheduled" || s.status === "posting");
-  const failed = S.schedules.filter((s) => s.status === "failed");
+  const failed = S.schedules.filter((s) => s.status === "failed" || s.status === "missed");
   const posted = S.schedules.filter((s) => s.status === "posted").reverse();
   if (!S.schedules.length)
     return h("div", null, h("div", { class: "empty" }, h("b", null, "걸어 둔 예약이 없어요"), "[글 쓰기]에서 새 글을 예약해 보세요."), listNote());
@@ -406,7 +410,7 @@ function listView() {
     posted.length > 0 && [h("div", { class: "sec" }, "최근 올린 글"), posted.map(itemView)],
     listNote());
 }
-const listNote = () => h("p", { class: "note" }, "OTTOV 서버에 맡긴 예약만 보여요. 올린 글은 PC OTTOV가 결과를 받아 가면 여기서 빠져요.");
+const listNote = () => h("p", { class: "note" }, "PC에서 건 예약도 여기에 보여요. PC 오또브가 켜져 있으면 1분 안에 맞춰져요. 올린 글은 하루 지나면 목록에서 빠져요.");
 
 function render() {
   const root = document.getElementById("app");
