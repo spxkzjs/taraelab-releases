@@ -1,13 +1,18 @@
 {
   "name": "OTTOV 예약",
   "short_name": "OTTOV 예약",
-  "description": "폰에서 스레드 글을 써서 예약해요. 컴퓨터가 꺼져 있어도 시간에 맞춰 올라가요.",
+  "description": "폰에서 스레드 글을 써서 예약하고, 스레드 글 링크를 수집함에 모아요. 컴퓨터가 꺼져 있어도 시간에 맞춰 올라가요.",
   "lang": "ko",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#1b1b2c",
   "theme_color": "#1b1b2c",
+  "share_target": {
+    "action": "./?shared=1",
+    "method": "GET",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  },
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
