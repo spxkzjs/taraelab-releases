@@ -30,6 +30,14 @@ const S = {
   when: "60-90",
   at: "",
   sending: false,
+  // 수집
+  collects: [], // 폰에서 보낸 링크 { code, url, kind, status, preview, error }
+  collection: [], // PC 수집함 최근 글 요약
+  collectOk: true, // 서버에 수집 기능이 준비됐는지
+  link: "",
+  kind: store.get("ottov-m-kind") === "body" ? "body" : "thread",
+  collecting: false,
+  q: "",
   installEvt: null,
   installHidden: store.get("ottov-m-install-hidden") === "1",
 };
@@ -69,7 +77,7 @@ async function load(quiet) {
   S.loading = true;
   render();
   try {
-    const j = await api("m-state");
+    const [j] = await Promise.all([api("m-state"), loadCollect()]);
     S.accounts = j.accounts || [];
     S.schedules = j.schedules || [];
     if (!S.accounts.some((a) => a.threads_user_id === S.account)) S.account = S.accounts[0] ? S.accounts[0].threads_user_id : "";
@@ -78,6 +86,63 @@ async function load(quiet) {
     if (!quiet) toast(e.message, true);
   }
   S.loading = false;
+  render();
+}
+
+// ── 수집 ──
+async function loadCollect() {
+  if (!S.token) return;
+  try {
+    const j = await api("m-collect-state");
+    S.collects = j.collects || [];
+    S.collection = j.collection || [];
+    S.collectOk = true;
+  } catch {
+    S.collectOk = false; // 서버에 아직 수집 기능이 없음 (예약은 그대로 쓸 수 있게 조용히)
+  }
+}
+
+/** 붙여넣은 글(공유 문구 포함)에서 스레드 글 주소만 꺼낸다 */
+function findLink(s) {
+  const m = String(s || "").match(/https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[A-Za-z0-9._]+\/post|t)\/[A-Za-z0-9_-]{5,}[^\s]*/);
+  return m ? m[0] : "";
+}
+
+async function collect(raw) {
+  const url = findLink(raw != null ? raw : S.link);
+  if (!url) return toast("스레드 글 링크가 아니에요. 스레드에서 [공유] → [링크 복사]로 받은 주소를 넣어 주세요.", true);
+  if (S.collecting) return;
+  S.collecting = true;
+  render();
+  try {
+    const r = await api("m-collect", { url, kind: S.kind });
+    S.link = "";
+    toast(r.again ? "이미 보낸 링크예요. PC 오또브가 곧 수집함에 넣어요." : r.inCollection ? "이미 수집함에 있는 글이에요. 숫자·본문을 새로 받아 올게요." : "보냈어요! PC 오또브가 켜져 있으면 1분 안에 수집함에 들어가요.");
+    await loadCollect();
+  } catch (e) {
+    toast(e.message, true);
+  }
+  S.collecting = false;
+  render();
+}
+
+async function pasteLink() {
+  try {
+    const t = await navigator.clipboard.readText();
+    const url = findLink(t);
+    if (!url) return toast("복사한 내용에 스레드 글 링크가 없어요.", true);
+    S.link = url;
+    render();
+  } catch {
+    toast("붙여넣기를 허락하지 않았어요. 입력칸을 길게 눌러 붙여넣어 주세요.", true);
+  }
+}
+
+async function removeCollect(c) {
+  try {
+    await api("m-collect-del", { code: c.code });
+  } catch {}
+  await loadCollect();
   render();
 }
 
@@ -412,10 +477,83 @@ function listView() {
 }
 const listNote = () => h("p", { class: "note" }, "PC에서 건 예약도 여기에 보여요. PC 오또브가 켜져 있으면 1분 안에 맞춰져요. 올린 글은 하루 지나면 목록에서 빠져요.");
 
+// ── 수집 화면 ──
+const nfmt = (n) => (n == null ? "" : n >= 10000 ? `${(n / 10000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, "")}만` : n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}천` : String(n));
+
+function sentView(c) {
+  const p = c.preview || {};
+  const label = { pending: "PC로 옮기는 중", saved: "수집함에 저장됨", failed: "실패" }[c.status] || c.status;
+  const badge = { pending: "posting", saved: "posted", failed: "failed" }[c.status] || "";
+  return h("div", { class: "item" },
+    h("div", { class: "head" },
+      h("span", { class: "who strong" }, p.username ? `@${p.username}` : "스레드 글"),
+      p.views != null && h("span", { class: "who" }, `조회 ${nfmt(p.views)}`),
+      h("span", { class: `badge ${badge}` }, label)),
+    p.text ? h("p", { class: "text" }, p.text) : h("p", { class: "text dim" }, c.url),
+    c.status === "failed" && c.error && h("div", { class: "err" }, c.error),
+    c.status === "pending" && h("div", { class: "pcnote" }, "PC 오또브가 켜져 있어야 수집함에 들어가요"),
+    h("div", { class: "meta" },
+      h("span", null, c.kind === "body" ? "본문만" : "본문+타래"),
+      c.status === "failed" && h("button", { class: "act", onclick: () => { S.kind = c.kind === "body" ? "body" : "thread"; collect(c.url); } }, "다시 보내기"),
+      h("button", { class: c.status === "failed" ? "act x" : "act", "aria-label": "목록에서 지우기", onclick: () => removeCollect(c) }, "✕")));
+}
+
+function boxView(p) {
+  const when = p.posted_at ? fmt(p.posted_at) : "";
+  return h("div", { class: "item" },
+    h("div", { class: "head" },
+      h("span", { class: "who strong" }, `@${p.username || "?"}`),
+      when && h("span", { class: "who" }, when),
+      p.views != null && h("span", { class: "views" }, `조회 ${nfmt(p.views)}`)),
+    h("p", { class: "text" }, p.text || "(본문 없음)"),
+    h("div", { class: "meta" },
+      h("span", null, `♥ ${nfmt(p.likes || 0)}`),
+      h("span", null, `댓글 ${nfmt(p.replies || 0)}`),
+      p.url && h("a", { class: "act", href: p.url, target: "_blank", rel: "noopener" }, "스레드에서 보기")));
+}
+
+function collectView() {
+  if (!S.collectOk)
+    return h("div", { class: "empty" }, h("b", null, "아직 수집 기능을 쓸 수 없어요"), "OTTOV 서버가 새 버전으로 바뀌면 여기에서 바로 수집할 수 있어요.");
+
+  const linkBox = h("input", {
+    id: "link", type: "url", inputmode: "url", autocomplete: "off", placeholder: "스레드 글 링크를 붙여넣어 주세요", value: S.link,
+    oninput: (e) => { S.link = e.target.value; },
+    onkeydown: (e) => { if (e.key === "Enter") collect(); },
+  });
+  const kindChip = (v, t) =>
+    h("button", { class: "chip", "aria-pressed": String(S.kind === v), onclick: () => { S.kind = v; store.set("ottov-m-kind", v); render(); } }, t);
+
+  const pending = S.collects.filter((c) => c.status !== "saved");
+  const recent = S.collects.filter((c) => c.status === "saved").slice(0, 5);
+  const q = S.q.trim().toLowerCase();
+  const box = q ? S.collection.filter((p) => `${p.username} ${p.text}`.toLowerCase().includes(q)) : S.collection;
+
+  return h("div", null,
+    h("div", { class: "field" },
+      h("div", { class: "label" }, "링크로 수집"),
+      h("div", { class: "link-row" }, linkBox,
+        navigator.clipboard && navigator.clipboard.readText && h("button", { class: "paste", onclick: pasteLink }, "붙여넣기")),
+      h("div", { class: "accounts kind" }, kindChip("thread", "본문+타래"), kindChip("body", "본문만")),
+      h("button", { class: "go", disabled: S.collecting, onclick: () => collect() }, S.collecting ? "보내는 중…" : "수집하기"),
+      h("p", { class: "note" },
+        isIOS ? "스레드 앱에서 글의 [공유] → [링크 복사]를 누른 뒤 여기서 [붙여넣기]를 눌러요."
+          : "스레드 앱에서 글의 [공유] → [OTTOV 예약]을 고르면 바로 수집돼요. (홈 화면에 앱으로 설치했을 때) 또는 [링크 복사] 후 [붙여넣기].")),
+
+    pending.length > 0 && [h("div", { class: "sec" }, `보낸 링크 ${pending.length}`), pending.map(sentView)],
+    recent.length > 0 && [h("div", { class: "sec" }, "방금 수집한 글"), recent.map(sentView)],
+
+    h("div", { class: "sec" }, `수집함 ${S.collection.length}${S.collection.length >= 300 ? "+ (최근 300개)" : ""}`),
+    S.collection.length > 0 && h("input", { id: "q", type: "search", class: "search", placeholder: "작성자·본문 검색", value: S.q, oninput: (e) => { S.q = e.target.value; render(); } }),
+    !S.collection.length
+      ? h("div", { class: "empty" }, h("b", null, "수집함이 비어 있어요"), "PC 오또브가 켜져 있으면 1분 안에 PC 수집함이 여기에 보여요.")
+      : box.length ? box.map(boxView) : h("div", { class: "empty" }, "검색한 글이 없어요."));
+}
+
 function render() {
   const root = document.getElementById("app");
   const active = document.activeElement;
-  const keepFocus = active && active.tagName === "TEXTAREA" ? { id: active.id, label: active.getAttribute("aria-label"), pos: active.selectionStart } : null;
+  const keepFocus = active && (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && active.id)) ? { id: active.id, label: active.getAttribute("aria-label"), pos: active.selectionStart } : null;
   root.replaceChildren(S.token ? mainView() : pairView());
   if (keepFocus) {
     const el = keepFocus.id ? document.getElementById(keepFocus.id) : document.querySelector(`textarea[aria-label="${keepFocus.label}"]`);
@@ -425,15 +563,19 @@ function render() {
 
 function mainView() {
   const up = S.schedules.filter((s) => s.status === "scheduled" || s.status === "posting").length;
-  const tab = (id, text, extra) => h("button", { role: "tab", "aria-selected": String(S.tab === id), onclick: () => { S.tab = id; render(); if (id === "list") load(true); } }, text, extra);
+  const waiting = S.collects.filter((c) => c.status === "pending").length;
+  const tab = (id, text, extra) => h("button", { role: "tab", "aria-selected": String(S.tab === id), onclick: () => { S.tab = id; render(); if (id !== "write") load(true); } }, text, extra);
   return h("div", { class: "wrap" },
     h("div", { class: "top" },
       h("img", { src: "icon-192.png", alt: "" }),
       h("h1", null, "OTTOV 예약"),
       h("button", { class: "icon-btn", "aria-label": "새로고침", "aria-busy": String(S.loading), onclick: () => load() }, h("span", null, "↻"))),
     installHint(),
-    h("div", { class: "tabs", role: "tablist" }, tab("write", "글 쓰기"), tab("list", "예약 목록", up > 0 && h("span", { class: "n" }, up))),
-    !S.loaded ? h("div", { class: "empty" }, S.loading ? "불러오는 중…" : "") : S.tab === "write" ? writeView() : listView(),
+    h("div", { class: "tabs", role: "tablist" },
+      tab("write", "글 쓰기"),
+      tab("list", "예약 목록", up > 0 && h("span", { class: "n" }, up)),
+      tab("collect", "수집", waiting > 0 && h("span", { class: "n" }, waiting))),
+    !S.loaded ? h("div", { class: "empty" }, S.loading ? "불러오는 중…" : "") : S.tab === "write" ? writeView() : S.tab === "collect" ? collectView() : listView(),
     S.tab === "list" && h("div", { class: "foot" }, h("button", { onclick: forget }, "이 폰 연결 끊기")));
 }
 
@@ -448,11 +590,29 @@ window.addEventListener("hashchange", async () => {
 window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); S.installEvt = e; render(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(true); });
 setInterval(() => { if (document.visibilityState === "visible" && S.tab === "list") load(true); }, 60000);
+// 수집: PC로 옮기는 중인 링크가 있으면 15초마다 결과를 확인한다
+setInterval(async () => {
+  if (document.visibilityState !== "visible" || S.tab !== "collect" || !S.collects.some((c) => c.status === "pending")) return;
+  await loadCollect();
+  render();
+}, 15000);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
+/** 안드로이드: 스레드 앱 [공유] → OTTOV 예약 으로 들어온 링크 (manifest 의 share_target) */
+function sharedLink() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("shared")) return "";
+  history.replaceState(null, "", location.pathname + location.hash);
+  return findLink(`${q.get("url") || ""} ${q.get("text") || ""} ${q.get("title") || ""}`) || "-";
+}
+
 (async () => {
+  const shared = sharedLink();
+  if (shared) S.tab = "collect";
   render();
   await claimFromHash();
   render();
-  load();
+  await load();
+  if (shared === "-") toast("공유한 내용에 스레드 글 링크가 없어요.", true);
+  else if (shared && S.token) collect(shared);
 })();
