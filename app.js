@@ -102,15 +102,24 @@ async function loadCollect() {
   }
 }
 
-/** 붙여넣은 글(공유 문구 포함)에서 스레드 글 주소만 꺼낸다 */
+/**
+ * 붙여넣은 글(공유 문구 포함)에서 스레드 주소만 꺼낸다.
+ * 보통 글 주소(@아이디/post/코드)가 먼저, 없으면 모양이 다른 스레드 주소(짧은 공유 링크 등)도 받는다 → 서버가 열어서 진짜 글을 찾는다.
+ */
 function findLink(s) {
-  const m = String(s || "").match(/https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[A-Za-z0-9._]+\/post|t)\/[A-Za-z0-9_-]{5,}[^\s]*/);
-  return m ? m[0] : "";
+  const t = String(s || "");
+  const post = t.match(/https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[A-Za-z0-9._]+\/post|t)\/[A-Za-z0-9_-]{5,}[^\s]*/i);
+  if (post) return post[0];
+  const any = t.match(/https?:\/\/(?:[a-z0-9-]+\.)*threads\.(?:com|net)\/[^\s"'<>]+/i);
+  return any ? any[0] : "";
 }
 
 async function collect(raw) {
   const url = findLink(raw != null ? raw : S.link);
-  if (!url) return toast("스레드 글 링크가 아니에요. 스레드에서 [공유] → [링크 복사]로 받은 주소를 넣어 주세요.", true);
+  if (!url) {
+    const got = String(raw != null ? raw : S.link).trim().slice(0, 60);
+    return toast(got ? `스레드 주소가 아니에요. (넣은 내용: ${got})` : "스레드 글 링크를 붙여넣어 주세요.", true);
+  }
   if (S.collecting) return;
   S.collecting = true;
   render();
@@ -521,7 +530,7 @@ function collectView() {
       S.link = e.target.value;
       // 칸에 링크를 붙여넣으면 [수집하기]를 누르지 않아도 바로 보낸다
       const url = findLink(S.link);
-      const code = url && (url.match(/\/(?:post|t)\/([A-Za-z0-9_-]+)/) || [])[1];
+      const code = url && ((url.match(/\/(?:post|t)\/([A-Za-z0-9_-]+)/) || [])[1] || url);
       if (url && !S.collecting && code !== S.lastAuto) {
         S.lastAuto = code; // 같은 글은 한 번만 자동으로 (다시 보내려면 [수집하기])
         collect(url);
