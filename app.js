@@ -131,8 +131,7 @@ async function pasteLink() {
     const t = await navigator.clipboard.readText();
     const url = findLink(t);
     if (!url) return toast("복사한 내용에 스레드 글 링크가 없어요.", true);
-    S.link = url;
-    render();
+    collect(url); // 붙여넣으면 바로 수집
   } catch {
     toast("붙여넣기를 허락하지 않았어요. 입력칸을 길게 눌러 붙여넣어 주세요.", true);
   }
@@ -518,7 +517,16 @@ function collectView() {
 
   const linkBox = h("input", {
     id: "link", type: "url", inputmode: "url", autocomplete: "off", placeholder: "스레드 글 링크를 붙여넣어 주세요", value: S.link,
-    oninput: (e) => { S.link = e.target.value; },
+    oninput: (e) => {
+      S.link = e.target.value;
+      // 칸에 링크를 붙여넣으면 [수집하기]를 누르지 않아도 바로 보낸다
+      const url = findLink(S.link);
+      const code = url && (url.match(/\/(?:post|t)\/([A-Za-z0-9_-]+)/) || [])[1];
+      if (url && !S.collecting && code !== S.lastAuto) {
+        S.lastAuto = code; // 같은 글은 한 번만 자동으로 (다시 보내려면 [수집하기])
+        collect(url);
+      }
+    },
     onkeydown: (e) => { if (e.key === "Enter") collect(); },
   });
   const kindChip = (v, t) =>
@@ -536,9 +544,7 @@ function collectView() {
         navigator.clipboard && navigator.clipboard.readText && h("button", { class: "paste", onclick: pasteLink }, "붙여넣기")),
       h("div", { class: "accounts kind" }, kindChip("thread", "본문+타래"), kindChip("body", "본문만")),
       h("button", { class: "go", disabled: S.collecting, onclick: () => collect() }, S.collecting ? "보내는 중…" : "수집하기"),
-      h("p", { class: "note" },
-        isIOS ? "스레드 앱에서 글의 [공유] → [링크 복사]를 누른 뒤 여기서 [붙여넣기]를 눌러요."
-          : "스레드 앱에서 글의 [공유] → [OTTOV 예약]을 고르면 바로 수집돼요. (홈 화면에 앱으로 설치했을 때) 또는 [링크 복사] 후 [붙여넣기].")),
+      h("p", { class: "note" }, "스레드 앱에서 글의 [공유] → [링크 복사] 후, 위 칸에 붙여넣거나 [붙여넣기]를 누르면 바로 수집돼요.")),
 
     pending.length > 0 && [h("div", { class: "sec" }, `보낸 링크 ${pending.length}`), pending.map(sentView)],
     recent.length > 0 && [h("div", { class: "sec" }, "방금 수집한 글"), recent.map(sentView)],
