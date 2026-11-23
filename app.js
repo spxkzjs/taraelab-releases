@@ -126,7 +126,11 @@ async function collect(raw) {
   try {
     const r = await api("m-collect", { url, kind: S.kind });
     S.link = "";
-    toast(r.again ? "이미 보낸 링크예요. PC 오또브가 곧 수집함에 넣어요." : r.inCollection ? "이미 수집함에 있는 글이에요. 숫자·본문을 새로 받아 올게요." : "보냈어요! PC 오또브가 켜져 있으면 1분 안에 수집함에 들어가요.");
+    toast(
+      r.again ? "이미 수집한 링크예요."
+        : r.status === "ready" ? (r.inCollection ? "다시 수집했어요! 숫자·본문을 새로 받았어요." : "수집했어요!")
+        : "보냈어요. 서버가 이 글을 바로 못 읽어서, PC 오또브를 켜면 수집돼요.",
+    );
     await loadCollect();
   } catch (e) {
     toast(e.message, true);
@@ -490,8 +494,8 @@ const nfmt = (n) => (n == null ? "" : n >= 10000 ? `${(n / 10000).toFixed(n >= 1
 
 function sentView(c) {
   const p = c.preview || {};
-  const label = { pending: "PC로 옮기는 중", saved: "수집함에 저장됨", failed: "실패" }[c.status] || c.status;
-  const badge = { pending: "posting", saved: "posted", failed: "failed" }[c.status] || "";
+  const label = { pending: "PC 켜면 수집", ready: "수집 완료", saved: "수집함에 저장됨", failed: "실패" }[c.status] || c.status;
+  const badge = { pending: "posting", ready: "posted", saved: "posted", failed: "failed" }[c.status] || "";
   return h("div", { class: "item" },
     h("div", { class: "head" },
       h("span", { class: "who strong" }, p.username ? `@${p.username}` : "스레드 글"),
@@ -499,7 +503,7 @@ function sentView(c) {
       h("span", { class: `badge ${badge}` }, label)),
     p.text ? h("p", { class: "text" }, p.text) : h("p", { class: "text dim" }, c.url),
     c.status === "failed" && c.error && h("div", { class: "err" }, c.error),
-    c.status === "pending" && h("div", { class: "pcnote" }, "PC 오또브가 켜져 있어야 수집함에 들어가요"),
+    c.status === "pending" && h("div", { class: "pcnote" }, "서버가 이 글을 바로 못 읽었어요. PC 오또브를 켜면 PC가 읽어서 수집해요."),
     h("div", { class: "meta" },
       h("span", null, c.kind === "body" ? "본문만" : "본문+타래"),
       c.status === "failed" && h("button", { class: "act", onclick: () => { S.kind = c.kind === "body" ? "body" : "thread"; collect(c.url); } }, "다시 보내기"),
@@ -517,6 +521,7 @@ function boxView(p) {
     h("div", { class: "meta" },
       h("span", null, `♥ ${nfmt(p.likes || 0)}`),
       h("span", null, `댓글 ${nfmt(p.replies || 0)}`),
+      p.ready && h("span", { class: "new" }, "새로 수집 · PC 켜면 PC에도"),
       p.url && h("a", { class: "act", href: p.url, target: "_blank", rel: "noopener" }, "스레드에서 보기")));
 }
 
@@ -541,10 +546,16 @@ function collectView() {
   const kindChip = (v, t) =>
     h("button", { class: "chip", "aria-pressed": String(S.kind === v), onclick: () => { S.kind = v; store.set("ottov-m-kind", v); render(); } }, t);
 
-  const pending = S.collects.filter((c) => c.status !== "saved");
-  const recent = S.collects.filter((c) => c.status === "saved").slice(0, 5);
+  // 보낸 링크: 아직 수집 못 한 것(PC를 켜야 하는 것)과 실패한 것만
+  const pending = S.collects.filter((c) => c.status === "pending" || c.status === "failed");
+  // 수집함 = 서버가 바로 수집해 둔 글(PC로 옮기기 전) + PC 수집함
+  const inPc = new Set(S.collection.map((p) => p.code));
+  const ready = S.collects
+    .filter((c) => c.status === "ready" && !inPc.has(c.code))
+    .map((c) => ({ ...(c.preview || {}), code: c.code, url: c.url, ready: true }));
+  const all = [...ready, ...S.collection];
   const q = S.q.trim().toLowerCase();
-  const box = q ? S.collection.filter((p) => `${p.username} ${p.text}`.toLowerCase().includes(q)) : S.collection;
+  const box = q ? all.filter((p) => `${p.username} ${p.text}`.toLowerCase().includes(q)) : all;
 
   return h("div", null,
     h("div", { class: "field" },
@@ -552,16 +563,15 @@ function collectView() {
       h("div", { class: "link-row" }, linkBox,
         navigator.clipboard && navigator.clipboard.readText && h("button", { class: "paste", onclick: pasteLink }, "붙여넣기")),
       h("div", { class: "accounts kind" }, kindChip("thread", "본문+타래"), kindChip("body", "본문만")),
-      h("button", { class: "go", disabled: S.collecting, onclick: () => collect() }, S.collecting ? "보내는 중…" : "수집하기"),
-      h("p", { class: "note" }, "스레드 앱에서 글의 [공유] → [링크 복사] 후, 위 칸에 붙여넣거나 [붙여넣기]를 누르면 바로 수집돼요.")),
+      h("button", { class: "go", disabled: S.collecting, onclick: () => collect() }, S.collecting ? "수집하는 중… (몇 초 걸려요)" : "수집하기"),
+      h("p", { class: "note" }, "스레드 앱에서 글의 [공유] → [링크 복사] 후, 위 칸에 붙여넣거나 [붙여넣기]를 누르면 바로 수집돼요. PC가 꺼져 있어도 돼요.")),
 
-    pending.length > 0 && [h("div", { class: "sec" }, `보낸 링크 ${pending.length}`), pending.map(sentView)],
-    recent.length > 0 && [h("div", { class: "sec" }, "방금 수집한 글"), recent.map(sentView)],
+    pending.length > 0 && [h("div", { class: "sec" }, `기다리는 링크 ${pending.length}`), pending.map(sentView)],
 
-    h("div", { class: "sec" }, `수집함 ${S.collection.length}${S.collection.length >= 300 ? "+ (최근 300개)" : ""}`),
-    S.collection.length > 0 && h("input", { id: "q", type: "search", class: "search", placeholder: "작성자·본문 검색", value: S.q, oninput: (e) => { S.q = e.target.value; render(); } }),
-    !S.collection.length
-      ? h("div", { class: "empty" }, h("b", null, "수집함이 비어 있어요"), "PC 오또브가 켜져 있으면 1분 안에 PC 수집함이 여기에 보여요.")
+    h("div", { class: "sec" }, `수집함 ${all.length}${S.collection.length >= 300 ? "+ (최근 글만)" : ""}`),
+    all.length > 0 && h("input", { id: "q", type: "search", class: "search", placeholder: "작성자·본문 검색", value: S.q, oninput: (e) => { S.q = e.target.value; render(); } }),
+    !all.length
+      ? h("div", { class: "empty" }, h("b", null, "수집함이 비어 있어요"), "위에 스레드 링크를 붙여넣으면 바로 수집돼요. PC 수집함의 글도 PC 오또브를 한 번 켜면 여기에 보여요.")
       : box.length ? box.map(boxView) : h("div", { class: "empty" }, "검색한 글이 없어요."));
 }
 
