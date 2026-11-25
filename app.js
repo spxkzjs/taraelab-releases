@@ -38,6 +38,14 @@ const S = {
   kind: store.get("ottov-m-kind") === "body" ? "body" : "thread",
   collecting: false,
   q: "",
+  // 재업로드
+  reItems: [], // PC 재업로드 목록 (서버에 맞춰 둔 것)
+  reOk: true, // 서버에 재업로드 기능이 준비됐는지
+  reTab: "todo",
+  reBusy: {}, // rid → { step, err }
+  reEdit: null, // [고쳐서 올리기]로 글 쓰기 칸에 채운 재업로드 { rid, username, views, text, thread }
+  aiOpen: false,
+  aiBusy: false,
   installEvt: null,
   installHidden: store.get("ottov-m-install-hidden") === "1",
 };
@@ -47,8 +55,16 @@ try {
   S.thread = Array.isArray(d.thread) ? d.thread : [];
   S.when = d.when === "90-120" || d.when === "at" ? d.when : "60-90";
   S.account = d.account || "";
+  // 재업로드를 고치던 중이면 그 글과 서버에 있는 사진(주소)도 이어서
+  if (d.reEdit && d.reEdit.rid) {
+    S.reEdit = d.reEdit;
+    S.photos = (Array.isArray(d.rePhotos) ? d.rePhotos : []).filter((p) => p && p.path && p.url);
+  }
 } catch {}
-const saveDraft = () => store.set(DRAFT_KEY, JSON.stringify({ body: S.body, thread: S.thread, when: S.when, account: S.account }));
+const saveDraft = () => store.set(DRAFT_KEY, JSON.stringify({
+  body: S.body, thread: S.thread, when: S.when, account: S.account,
+  reEdit: S.reEdit, rePhotos: S.reEdit ? S.photos.filter((p) => p.path).map((p) => ({ url: p.url, path: p.path })) : [],
+}));
 
 // ── 서버 ──
 async function api(action, body = {}) {
@@ -77,7 +93,7 @@ async function load(quiet) {
   S.loading = true;
   render();
   try {
-    const [j] = await Promise.all([api("m-state"), loadCollect()]);
+    const [j] = await Promise.all([api("m-state"), loadCollect(), loadReupload()]);
     S.accounts = j.accounts || [];
     S.schedules = j.schedules || [];
     if (!S.accounts.some((a) => a.threads_user_id === S.account)) S.account = S.accounts[0] ? S.accounts[0].threads_user_id : "";
@@ -86,6 +102,103 @@ async function load(quiet) {
     if (!quiet) toast(e.message, true);
   }
   S.loading = false;
+  render();
+}
+
+// ── 재업로드 ──
+async function loadReupload() {
+  if (!S.token) return;
+  try {
+    const j = await api("m-reupload-state");
+    S.reItems = j.items || [];
+    S.reOk = true;
+  } catch {
+    S.reOk = false; // 서버에 아직 재업로드 기능이 없음 (다른 기능은 그대로)
+  }
+}
+
+/** 이 글을 올릴 계정: 원래 올렸던 계정이 있으면 그 계정, 없으면 지금 고른 계정 */
+const reAccount = (r) => (S.accounts.some((a) => a.threads_user_id === r.threads_user_id) ? r.threads_user_id : S.account);
+
+function reStep(rid, v) {
+  if (v) S.reBusy[rid] = v;
+  else delete S.reBusy[rid];
+  render();
+}
+
+/** [⚡ AI로 바꿔서 바로 예약]: AI로 살짝 바꾸고 → 마지막 예약 + 60~80분에 예약 (PC [바로 예약]과 같다) */
+async function quickReupload(r) {
+  if (S.reBusy[r.rid] && !S.reBusy[r.rid].err) return;
+  if (!window.OttovAI.has()) {
+    S.aiOpen = true;
+    render();
+    return toast("AI 키를 먼저 넣어 주세요. 위 [AI 키] 칸에 넣으면 돼요.", true);
+  }
+  const uid = reAccount(r);
+  if (!uid) return toast("올릴 계정이 없어요. PC 오또브를 한 번 켜서 계정을 맞춰 주세요.", true);
+  if (r.wait > 0 && !confirm(`사진 ${r.wait}장은 PC가 아직 올리는 중이에요. 지금 있는 사진 ${r.images.length}장만 넣어 예약할까요?`)) return;
+  try {
+    reStep(r.rid, { step: "AI가 글을 살짝 바꾸는 중… (10~30초)" });
+    const ai = await window.OttovAI.remix(r.text || "", (r.thread || []).filter((t) => String(t).trim()), tlen, MAX_LEN);
+    reStep(r.rid, { step: "예약하는 중…" });
+    const res = await api("m-reupload", { rid: r.rid, threads_user_id: uid, body: ai.body, thread: ai.thread, images: r.images.map((i) => i.path), gap: "60-80" });
+    reStep(r.rid, null);
+    toast(`${fmt(res.scheduled_at)}에 올라가게 예약했어요.${ai.kept.length ? ` (${ai.kept.join(", ")}은 숫자·재료를 지키려고 원래 글로 뒀어요)` : ""}`);
+    await Promise.all([loadReupload(), load(true)]);
+    render();
+  } catch (e) {
+    reStep(r.rid, { step: e.message || "예약하지 못했어요. 다시 눌러 주세요.", err: true });
+  }
+}
+
+/** [고쳐서 올리기]: 글 쓰기 칸에 원래 글·사진을 채운다. 예약하면 이 재업로드가 '완료'로 옮겨진다 */
+function editReupload(r) {
+  const busy = S.body.trim() || S.thread.some((t) => t.trim()) || S.photos.length;
+  if (busy && !S.reEdit && !confirm("글 쓰기 칸에 쓰던 글이 있어요. 이 재업로드 글로 바꿀까요?")) return;
+  S.photos.forEach((p) => { if (!p.path) URL.revokeObjectURL(p.url); });
+  S.reEdit = { rid: r.rid, username: r.username, views: r.views, text: r.text || "", thread: (r.thread || []).filter((t) => String(t).trim()) };
+  S.body = r.text || "";
+  S.thread = S.reEdit.thread.slice();
+  S.photos = r.images.map((i) => ({ url: i.url, path: i.path }));
+  const uid = reAccount(r);
+  if (uid) S.account = uid;
+  S.tab = "write";
+  saveDraft();
+  render();
+  scrollTo(0, 0);
+}
+
+function stopReEdit() {
+  S.reEdit = null;
+  S.body = "";
+  S.thread = [];
+  S.photos.forEach((p) => { if (!p.path) URL.revokeObjectURL(p.url); });
+  S.photos = [];
+  saveDraft();
+  render();
+}
+
+/** 글 쓰기 칸의 재업로드 글을 AI로 살짝 바꾼다 (원래 글 기준) */
+async function remixInEditor() {
+  if (!window.OttovAI.has()) {
+    S.tab = "reupload";
+    S.aiOpen = true;
+    render();
+    return toast("AI 키를 먼저 넣어 주세요.", true);
+  }
+  if (S.aiBusy || !S.reEdit) return;
+  S.aiBusy = true;
+  render();
+  try {
+    const ai = await window.OttovAI.remix(S.reEdit.text, S.reEdit.thread, tlen, MAX_LEN);
+    S.body = ai.body;
+    S.thread = ai.thread.slice();
+    saveDraft();
+    toast(ai.kept.length ? `바꿨어요. (${ai.kept.join(", ")}은 숫자·재료를 지키려고 원래 글로 뒀어요)` : "AI가 살짝 바꿨어요. 읽어 보고 예약해 주세요.");
+  } catch (e) {
+    toast(e.message, true);
+  }
+  S.aiBusy = false;
   render();
 }
 
@@ -276,26 +389,36 @@ async function submit() {
   render();
   try {
     const images = [];
-    for (let i = 0; i < S.photos.length; i++) {
-      setSubmitText(`사진 올리는 중… (${i + 1}/${S.photos.length})`);
-      images.push((await api("m-upload", { mimeType: "image/jpeg", data: S.photos[i].data })).path);
+    const fresh = S.photos.filter((p) => !p.path).length;
+    let n = 0;
+    for (const p of S.photos) {
+      // 재업로드 사진(서버에 이미 있음)은 그대로, 새로 고른 사진만 올린다
+      if (p.path) {
+        images.push(p.path);
+        continue;
+      }
+      setSubmitText(`사진 올리는 중… (${++n}/${fresh})`);
+      images.push((await api("m-upload", { mimeType: "image/jpeg", data: p.data })).path);
     }
     setSubmitText("예약하는 중…");
-    const r = await api("m-create", {
+    const re = S.reEdit;
+    const r = await api(re ? "m-reupload" : "m-create", {
+      ...(re ? { rid: re.rid } : {}),
       threads_user_id: S.account,
       body: S.body,
       thread: S.thread.filter((t) => t.trim()),
       images,
       ...(S.when === "at" ? { scheduled_at: new Date(S.at).toISOString() } : { gap: S.when }),
     });
-    S.photos.forEach((x) => URL.revokeObjectURL(x.url));
+    S.photos.forEach((x) => { if (!x.path) URL.revokeObjectURL(x.url); });
     S.body = "";
     S.thread = [];
     S.photos = [];
     S.at = "";
+    S.reEdit = null;
     saveDraft();
     S.tab = "list";
-    toast(`${fmt(r.scheduled_at)}에 올라가게 예약했어요.`);
+    toast(`${fmt(r.scheduled_at)}에 올라가게 예약했어요.${re ? " 재업로드 완료로 옮겼어요." : ""}`);
     S.sending = false;
     await load(true);
   } catch (e) {
@@ -420,7 +543,16 @@ function writeView() {
   };
   const minAt = localInput(new Date(Date.now() + 3 * 60000));
 
+  const re = S.reEdit;
   return h("div", null,
+    re && h("div", { class: "re-banner" },
+      h("div", { class: "re-head" },
+        h("b", null, "♻️ 재업로드"),
+        h("span", null, `@${re.username || "?"}${re.views != null ? ` · 조회 ${nfmt(re.views)}` : ""}`)),
+      h("p", null, "원래 글을 채워 뒀어요. 고쳐서 예약하면 PC [재업로드 완료]로 옮겨져요."),
+      h("div", { class: "re-acts" },
+        h("button", { class: "ai", disabled: S.aiBusy, onclick: remixInEditor }, S.aiBusy ? "AI가 바꾸는 중…" : "✨ AI로 살짝 바꾸기"),
+        h("button", { class: "stop", onclick: () => confirm("재업로드 글 쓰기를 그만둘까요? 채운 글이 지워져요.") && stopReEdit() }, "그만두기"))),
     acc.length > 1 && h("div", { class: "field" }, h("div", { class: "label" }, "계정"),
       h("div", { class: "accounts" }, acc.map((a) =>
         h("button", { class: "chip", "aria-pressed": String(S.account === a.threads_user_id), onclick: () => { S.account = a.threads_user_id; saveDraft(); render(); } }, `@${a.username || a.threads_user_id}`)))),
@@ -438,7 +570,7 @@ function writeView() {
       h("div", { class: "label" }, "사진", h("span", { class: "count" }, `${S.photos.length}/${MAX_IMAGES}`)),
       h("div", { class: "photos" },
         S.photos.map((p, i) => h("div", { class: "photo" }, h("img", { src: p.url, alt: `사진 ${i + 1}` }),
-          h("button", { "aria-label": `사진 ${i + 1} 빼기`, onclick: () => { URL.revokeObjectURL(p.url); S.photos.splice(i, 1); render(); } }, "✕"))),
+          h("button", { "aria-label": `사진 ${i + 1} 빼기`, onclick: () => { if (!p.path) URL.revokeObjectURL(p.url); S.photos.splice(i, 1); saveDraft(); render(); } }, "✕"))),
         S.photos.length < MAX_IMAGES && h("label", { class: "photo-add" }, "+ 사진", photoInput))),
 
     h("div", { class: "field" },
@@ -449,7 +581,7 @@ function writeView() {
         opt("at", "시각 직접 정하기",
           S.when === "at" && h("input", { type: "datetime-local", "aria-label": "올릴 시각", min: minAt, value: S.at || "", onchange: (e) => { S.at = e.target.value; } })))),
 
-    h("div", { class: "submit-bar" }, h("button", { disabled: S.sending || !S.account, onclick: submit }, S.sending ? "예약하는 중…" : "예약하기")));
+    h("div", { class: "submit-bar" }, h("button", { disabled: S.sending || !S.account || S.aiBusy, onclick: submit }, S.sending ? "예약하는 중…" : re ? "재업로드 예약하기" : "예약하기")));
 }
 
 function itemView(s) {
@@ -575,6 +707,88 @@ function collectView() {
       : box.length ? box.map(boxView) : h("div", { class: "empty" }, "검색한 글이 없어요."));
 }
 
+// ── 재업로드 화면 ──
+const AI_NAMES = { gemini: "Gemini", openai: "ChatGPT", anthropic: "Claude" };
+
+function aiBox() {
+  const s = window.OttovAI.load();
+  if (s.apiKey && !S.aiOpen)
+    return h("div", { class: "ai-box set" },
+      h("span", null, `✓ AI 키: ${AI_NAMES[s.provider] || s.provider}`),
+      h("button", { onclick: () => { S.aiOpen = true; render(); } }, "바꾸기"));
+  // 쓰는 중인 값은 S.aiDraft 에 (화면을 다시 그려도 남게)
+  if (!S.aiDraft) S.aiDraft = { provider: s.provider, key: s.apiKey };
+  const d = S.aiDraft;
+  const provider = d.provider;
+  const keyBox = h("input", { id: "ai-key", type: "password", autocomplete: "off", placeholder: "AI API 키를 붙여넣어 주세요", value: d.key, oninput: (e) => { d.key = e.target.value; } });
+  const pick = h("select", { "aria-label": "AI 회사", onchange: (e) => { d.provider = e.target.value; render(); } },
+    Object.entries(AI_NAMES).map(([v, t]) => h("option", { value: v, selected: v === d.provider }, t)));
+  return h("div", { class: "ai-box" },
+    h("div", { class: "label" }, "AI 키 (글을 살짝 바꿀 때 써요)"),
+    h("div", { class: "ai-row" }, pick, keyBox),
+    h("div", { class: "ai-acts" },
+      h("button", { class: "save", onclick: () => {
+        const apiKey = d.key.trim();
+        if (!apiKey) return toast("키를 붙여넣어 주세요.", true);
+        window.OttovAI.save({ provider, apiKey, model: provider === s.provider && s.model ? s.model : window.OttovAI.DEFAULT_MODELS[provider] });
+        S.aiOpen = false;
+        S.aiDraft = null;
+        render();
+        toast("AI 키를 이 폰에 저장했어요.");
+      } }, "저장"),
+      s.apiKey && h("button", { onclick: () => { S.aiOpen = false; S.aiDraft = null; render(); } }, "닫기"),
+      s.apiKey && h("button", { class: "del", onclick: () => { if (!confirm("이 폰에서 AI 키를 지울까요?")) return; window.OttovAI.save({ provider, apiKey: "", model: "" }); S.aiOpen = false; S.aiDraft = null; render(); } }, "지우기")),
+    h("p", { class: "note" }, "PC 오또브 [설정]에 넣은 것과 같은 키를 넣으면 돼요. 키는 이 폰에만 저장되고 OTTOV 서버로는 보내지 않아요."));
+}
+
+function ago(iso) {
+  const t = Date.parse(iso || "");
+  if (!t) return "";
+  const hrs = Math.floor((Date.now() - t) / 3600000);
+  return hrs < 48 ? `${hrs}시간 전` : `${Math.floor(hrs / 24)}일 전`;
+}
+
+function reItemView(r) {
+  const busy = S.reBusy[r.rid];
+  const doing = busy && !busy.err;
+  const thread = (r.thread || []).filter((t) => String(t).trim()).length;
+  return h("div", { class: "item" },
+    h("div", { class: "head" },
+      h("span", { class: "who strong" }, `@${r.username || "?"}`),
+      r.posted_at && h("span", { class: "who" }, `올린 지 ${ago(r.posted_at)}`),
+      r.views != null && h("span", { class: "views" }, `조회 ${nfmt(r.views)}`)),
+    r.status === "done" && h("div", { class: "re-when" }, r.scheduled_at ? `📅 ${fmt(r.scheduled_at)}에 올라가게 예약했어요` : r.done_at ? `완료로 옮겼어요 · ${fmt(r.done_at)}` : "완료로 옮겼어요"),
+    h("p", { class: "text" }, r.text || "(사진만 있는 글)"),
+    r.images && r.images.length > 0 && h("div", { class: "thumbs" }, r.images.slice(0, 5).map((i) => h("img", { src: i.url, alt: "", loading: "lazy" }))),
+    r.wait > 0 && h("div", { class: "pcnote" }, `사진 ${r.wait}장은 PC가 아직 올리는 중이에요. PC 오또브가 켜져 있으면 1~2분 안에 보여요.`),
+    busy && h("div", { class: busy.err ? "err" : "re-step" }, busy.step),
+    h("div", { class: "meta" },
+      h("span", null, `♥ ${nfmt(r.likes || 0)}`),
+      thread > 0 && h("span", null, `타래 ${thread}`),
+      r.url && h("a", { class: "act x", href: r.url, target: "_blank", rel: "noopener" }, "원본")),
+    h("div", { class: "re-btns" },
+      r.status === "todo" && h("button", { class: "go", disabled: doing || !S.accounts.length, onclick: () => quickReupload(r) }, doing ? "예약하는 중…" : "⚡ AI로 바꿔서 바로 예약"),
+      h("button", { class: "sub", disabled: doing, onclick: () => editReupload(r) }, r.status === "todo" ? "고쳐서 올리기" : "한 번 더 올리기")));
+}
+
+function reuploadView() {
+  if (!S.reOk)
+    return h("div", { class: "empty" }, h("b", null, "아직 재업로드를 쓸 수 없어요"), "OTTOV 서버가 새 버전으로 바뀌면 여기에서 재업로드할 수 있어요.");
+  const todo = S.reItems.filter((r) => r.status === "todo");
+  const done = S.reItems.filter((r) => r.status === "done").sort((a, b) => String(b.done_at || "").localeCompare(String(a.done_at || "")));
+  const list = S.reTab === "todo" ? todo : done;
+  const chip = (v, t) => h("button", { class: "chip", "aria-pressed": String(S.reTab === v), onclick: () => { S.reTab = v; render(); } }, t);
+  return h("div", null,
+    aiBox(),
+    h("div", { class: "accounts re-tabs" }, chip("todo", `재업로드 전 ${todo.length}`), chip("done", `재업로드 완료 ${done.length}`)),
+    !list.length
+      ? h("div", { class: "empty" },
+        h("b", null, S.reTab === "todo" ? "다시 올릴 글이 없어요" : "재업로드한 글이 없어요"),
+        S.reTab === "todo" ? "PC 오또브가 3시간마다 조회수가 잘 나온 내 글을 찾아요. PC가 켜져 있어야 이 목록이 바뀌어요." : "재업로드한 글이 여기에 모여요.")
+      : list.map(reItemView),
+    h("p", { class: "note" }, "[⚡ AI로 바꿔서 바로 예약]은 PC와 똑같이 숫자·재료는 그대로 두고 표현만 살짝 바꿔서, 마지막 예약 60~80분 뒤로 잡아요. PC가 꺼져 있어도 올라가요."));
+}
+
 function render() {
   const root = document.getElementById("app");
   const active = document.activeElement;
@@ -589,6 +803,7 @@ function render() {
 function mainView() {
   const up = S.schedules.filter((s) => s.status === "scheduled" || s.status === "posting").length;
   const waiting = S.collects.filter((c) => c.status === "pending").length;
+  const reTodo = S.reItems.filter((r) => r.status === "todo").length;
   const tab = (id, text, extra) => h("button", { role: "tab", "aria-selected": String(S.tab === id), onclick: () => { S.tab = id; render(); if (id !== "write") load(true); } }, text, extra);
   return h("div", { class: "wrap" },
     h("div", { class: "top" },
@@ -599,8 +814,10 @@ function mainView() {
     h("div", { class: "tabs", role: "tablist" },
       tab("write", "글 쓰기"),
       tab("list", "예약 목록", up > 0 && h("span", { class: "n" }, up)),
-      tab("collect", "수집", waiting > 0 && h("span", { class: "n" }, waiting))),
-    !S.loaded ? h("div", { class: "empty" }, S.loading ? "불러오는 중…" : "") : S.tab === "write" ? writeView() : S.tab === "collect" ? collectView() : listView(),
+      tab("collect", "수집", waiting > 0 && h("span", { class: "n" }, waiting)),
+      tab("reupload", "재업로드", reTodo > 0 && h("span", { class: "n" }, reTodo))),
+    !S.loaded ? h("div", { class: "empty" }, S.loading ? "불러오는 중…" : "")
+      : S.tab === "write" ? writeView() : S.tab === "collect" ? collectView() : S.tab === "reupload" ? reuploadView() : listView(),
     S.tab === "list" && h("div", { class: "foot" }, h("button", { onclick: forget }, "이 폰 연결 끊기")));
 }
 
@@ -614,7 +831,7 @@ window.addEventListener("hashchange", async () => {
 });
 window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); S.installEvt = e; render(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(true); });
-setInterval(() => { if (document.visibilityState === "visible" && S.tab === "list") load(true); }, 60000);
+setInterval(() => { if (document.visibilityState === "visible" && (S.tab === "list" || S.tab === "reupload")) load(true); }, 60000);
 // 수집: PC로 옮기는 중인 링크가 있으면 15초마다 결과를 확인한다
 setInterval(async () => {
   if (document.visibilityState !== "visible" || S.tab !== "collect" || !S.collects.some((c) => c.status === "pending")) return;
