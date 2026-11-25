@@ -760,7 +760,7 @@ function reItemView(r) {
     r.status === "done" && h("div", { class: "re-when" }, r.scheduled_at ? `📅 ${fmt(r.scheduled_at)}에 올라가게 예약했어요` : r.done_at ? `완료로 옮겼어요 · ${fmt(r.done_at)}` : "완료로 옮겼어요"),
     h("p", { class: "text" }, r.text || "(사진만 있는 글)"),
     r.images && r.images.length > 0 && h("div", { class: "thumbs" }, r.images.slice(0, 5).map((i) => h("img", { src: i.url, alt: "", loading: "lazy" }))),
-    r.wait > 0 && h("div", { class: "pcnote" }, `사진 ${r.wait}장은 PC가 아직 올리는 중이에요. PC 오또브가 켜져 있으면 1~2분 안에 보여요.`),
+    r.wait > 0 && h("div", { class: "pcnote" }, `사진 ${r.wait}장은 PC가 아직 올리는 중이에요. 1~2분 뒤 새로고침해 주세요.`),
     busy && h("div", { class: busy.err ? "err" : "re-step" }, busy.step),
     h("div", { class: "meta" },
       h("span", null, `♥ ${nfmt(r.likes || 0)}`),
@@ -784,7 +784,7 @@ function reuploadView() {
     !list.length
       ? h("div", { class: "empty" },
         h("b", null, S.reTab === "todo" ? "다시 올릴 글이 없어요" : "재업로드한 글이 없어요"),
-        S.reTab === "todo" ? "PC 오또브가 3시간마다 조회수가 잘 나온 내 글을 찾아요. PC가 켜져 있어야 이 목록이 바뀌어요." : "재업로드한 글이 여기에 모여요.")
+        S.reTab === "todo" ? "3시간마다 올린 지 24~48시간 된 내 글 중 조회수가 잘 나온 글을 찾아요. PC가 꺼져 있으면 OTTOV 서버가 대신 찾아요." : "재업로드한 글이 여기에 모여요.")
       : list.map(reItemView),
     h("p", { class: "note" }, "[⚡ AI로 바꿔서 바로 예약]은 PC와 똑같이 숫자·재료는 그대로 두고 표현만 살짝 바꿔서, 마지막 예약 60~80분 뒤로 잡아요. PC가 꺼져 있어도 올라가요."));
 }
