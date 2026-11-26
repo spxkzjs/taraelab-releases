@@ -46,6 +46,8 @@ const S = {
   reEdit: null, // [고쳐서 올리기]로 글 쓰기 칸에 채운 재업로드 { rid, username, views, text, thread }
   aiOpen: false,
   aiBusy: false,
+  openItems: new Set(), // 예약 목록에서 펼쳐 본 글
+
   installEvt: null,
   installHidden: store.get("ottov-m-install-hidden") === "1",
 };
@@ -126,35 +128,25 @@ function reStep(rid, v) {
   render();
 }
 
-/** [⚡ AI로 바꿔서 바로 예약]: AI로 살짝 바꾸고 → 마지막 예약 + 60~80분에 예약 (PC [바로 예약]과 같다) */
-async function quickReupload(r) {
-  if (S.reBusy[r.rid] && !S.reBusy[r.rid].err) return;
+/**
+ * [✨ AI로 바꾸기]: 글 쓰기 칸에 원래 글·사진을 채우고 AI로 살짝 바꿔 둔다. 예약은 하지 않는다
+ * (읽어 보고 고친 뒤 올릴 시각을 골라 [재업로드 예약하기]를 직접 누른다)
+ */
+async function aiReupload(r) {
   if (!window.OttovAI.has()) {
     S.aiOpen = true;
     render();
     return toast("AI 키를 먼저 넣어 주세요. 위 [AI 키] 칸에 넣으면 돼요.", true);
   }
-  const uid = reAccount(r);
-  if (!uid) return toast("올릴 계정이 없어요. PC 오또브를 한 번 켜서 계정을 맞춰 주세요.", true);
-  if (r.wait > 0 && !confirm(`사진 ${r.wait}장은 PC가 아직 올리는 중이에요. 지금 있는 사진 ${r.images.length}장만 넣어 예약할까요?`)) return;
-  try {
-    reStep(r.rid, { step: "AI가 글을 살짝 바꾸는 중… (10~30초)" });
-    const ai = await window.OttovAI.remix(r.text || "", (r.thread || []).filter((t) => String(t).trim()), tlen, MAX_LEN);
-    reStep(r.rid, { step: "예약하는 중…" });
-    const res = await api("m-reupload", { rid: r.rid, threads_user_id: uid, body: ai.body, thread: ai.thread, images: r.images.map((i) => i.path), gap: "60-80" });
-    reStep(r.rid, null);
-    toast(`${fmt(res.scheduled_at)}에 올라가게 예약했어요.${ai.kept.length ? ` (${ai.kept.join(", ")}은 숫자·재료를 지키려고 원래 글로 뒀어요)` : ""}`);
-    await Promise.all([loadReupload(), load(true)]);
-    render();
-  } catch (e) {
-    reStep(r.rid, { step: e.message || "예약하지 못했어요. 다시 눌러 주세요.", err: true });
-  }
+  if (r.wait > 0) toast(`사진 ${r.wait}장은 PC가 아직 올리는 중이에요. 지금 있는 사진만 채웠어요.`);
+  if (!editReupload(r)) return;
+  await remixInEditor();
 }
 
-/** [고쳐서 올리기]: 글 쓰기 칸에 원래 글·사진을 채운다. 예약하면 이 재업로드가 '완료'로 옮겨진다 */
+/** [고쳐서 올리기]: 글 쓰기 칸에 원래 글·사진을 채운다. 예약하면 이 재업로드가 '완료'로 옮겨진다. 채웠으면 true */
 function editReupload(r) {
   const busy = S.body.trim() || S.thread.some((t) => t.trim()) || S.photos.length;
-  if (busy && !S.reEdit && !confirm("글 쓰기 칸에 쓰던 글이 있어요. 이 재업로드 글로 바꿀까요?")) return;
+  if (busy && !S.reEdit && !confirm("글 쓰기 칸에 쓰던 글이 있어요. 이 재업로드 글로 바꿀까요?")) return false;
   S.photos.forEach((p) => { if (!p.path) URL.revokeObjectURL(p.url); });
   S.reEdit = { rid: r.rid, username: r.username, views: r.views, text: r.text || "", thread: (r.thread || []).filter((t) => String(t).trim()) };
   S.body = r.text || "";
@@ -166,6 +158,7 @@ function editReupload(r) {
   saveDraft();
   render();
   scrollTo(0, 0);
+  return true;
 }
 
 function stopReEdit() {
@@ -591,11 +584,22 @@ function itemView(s) {
   const pcOnly = s.origin === "mirror"; // PC 오또브가 직접 올리는 예약 (서버는 보여 주기만)
   const canCancel = s.status === "scheduled" || (pcOnly && (s.status === "failed" || s.status === "missed"));
   const when = s.status === "posted" && s.posted_at ? s.posted_at : s.scheduled_at;
-  const thread = (s.thread || []).filter((t) => String(t).trim()).length;
-  return h("div", { class: "item" },
+  const threads = (s.thread || []).filter((t) => String(t).trim());
+  const thread = threads.length;
+  // 글을 누르면 펼쳐서 본문 전체·타래·사진을 크게 본다
+  const open = S.openItems.has(s.local_id);
+  const toggle = () => {
+    if (open) S.openItems.delete(s.local_id);
+    else S.openItems.add(s.local_id);
+    render();
+  };
+  return h("div", { class: `item${open ? " open" : ""}` },
     h("div", { class: "head" }, h("span", { class: "time" }, fmt(when)), h("span", { class: "who" }, who), h("span", { class: `badge ${s.status}` }, label)),
-    h("p", { class: "text" }, s.body || "(본문 없음)"),
-    s.images && s.images.length > 0 && h("div", { class: "thumbs" }, s.images.slice(0, 5).map((u) => h("img", { src: u, alt: "", loading: "lazy" }))),
+    h("button", { class: "item-body", "aria-expanded": String(open), onclick: toggle },
+      h("p", { class: `text${open ? " full" : ""}` }, s.body || "(본문 없음)"),
+      open && threads.map((t, i) => h("div", { class: "item-thread" }, h("span", { class: "tag" }, `타래 ${i + 1}`), h("p", null, t))),
+      h("span", { class: "more" }, open ? "접기 ▴" : thread ? `글 전체·타래 ${thread}개 보기 ▾` : "글 전체 보기 ▾")),
+    s.images && s.images.length > 0 && h("div", { class: open ? "photos-big" : "thumbs" }, (open ? s.images : s.images.slice(0, 5)).map((u) => h("img", { src: u, alt: "", loading: "lazy" }))),
     (s.status === "failed" || s.status === "missed") && s.error && h("div", { class: "err" }, s.error),
     pcOnly && s.status === "scheduled" && h("div", { class: "pcnote" }, "PC 오또브가 켜져 있어야 올라가요"),
     h("div", { class: "meta" },
@@ -767,8 +771,9 @@ function reItemView(r) {
       thread > 0 && h("span", null, `타래 ${thread}`),
       r.url && h("a", { class: "act x", href: r.url, target: "_blank", rel: "noopener" }, "원본")),
     h("div", { class: "re-btns" },
-      r.status === "todo" && h("button", { class: "go", disabled: doing || !S.accounts.length, onclick: () => quickReupload(r) }, doing ? "예약하는 중…" : "⚡ AI로 바꿔서 바로 예약"),
-      h("button", { class: "sub", disabled: doing, onclick: () => editReupload(r) }, r.status === "todo" ? "고쳐서 올리기" : "한 번 더 올리기")));
+      // AI로 바꾼 글을 글 쓰기 칸에 채우기만 한다 (예약은 거기서 직접)
+      h("button", { class: "go", disabled: doing || S.aiBusy, onclick: () => aiReupload(r) }, S.aiBusy ? "AI가 바꾸는 중…" : "✨ AI로 바꾸기"),
+      h("button", { class: "sub", disabled: doing, onclick: () => editReupload(r) }, r.status === "todo" ? "그대로 고쳐서 올리기" : "한 번 더 올리기")));
 }
 
 function reuploadView() {
@@ -786,7 +791,7 @@ function reuploadView() {
         h("b", null, S.reTab === "todo" ? "다시 올릴 글이 없어요" : "재업로드한 글이 없어요"),
         S.reTab === "todo" ? "3시간마다 올린 지 24~48시간 된 내 글 중 조회수가 잘 나온 글을 찾아요. PC가 꺼져 있으면 OTTOV 서버가 대신 찾아요." : "재업로드한 글이 여기에 모여요.")
       : list.map(reItemView),
-    h("p", { class: "note" }, "[⚡ AI로 바꿔서 바로 예약]은 PC와 똑같이 숫자·재료는 그대로 두고 표현만 살짝 바꿔서, 마지막 예약 60~80분 뒤로 잡아요. PC가 꺼져 있어도 올라가요."));
+    h("p", { class: "note" }, "[✨ AI로 바꾸기]는 PC와 똑같이 숫자·재료는 그대로 두고 표현만 살짝 바꿔서 [글 쓰기]에 채워 줘요. 읽어 보고 올릴 시각을 골라 [재업로드 예약하기]를 누르면 예약돼요. PC가 꺼져 있어도 올라가요."));
 }
 
 function render() {

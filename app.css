@@ -134,6 +134,16 @@ textarea.thread { min-height: 92px; resize: vertical; }
 .item .meta .act + .act { margin-left: 0; }
 .item .meta .new { color: var(--good); font-weight: 800; font-size: 12.5px; }
 
+/* 예약 목록: 글을 누르면 펼쳐 보기 */
+.item-body { display: block; width: 100%; border: 0; background: none; padding: 0; text-align: left; color: inherit; }
+.item .text.full { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.item-thread { margin-top: 10px; padding-left: 10px; border-left: 2px solid var(--line); }
+.item-thread .tag { font-size: 12px; font-weight: 800; color: var(--accent); }
+.item-thread p { margin: 2px 0 0; white-space: pre-wrap; word-break: break-word; }
+.item .more { display: inline-block; margin-top: 6px; font-size: 12.5px; font-weight: 800; color: var(--accent); }
+.photos-big { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 10px; }
+.photos-big img { width: 100%; border-radius: 10px; object-fit: cover; aspect-ratio: 1; }
+
 /* 재업로드 */
 .tabs { grid-template-columns: repeat(4, 1fr); }
 .tabs button { font-size: 14px; padding: 10px 2px; white-space: nowrap; }
