@@ -833,12 +833,65 @@ function ninjiView() {
     h("div", { class: "item", style: "margin-top:18px" },
       h("div", { class: "head" }, h("span", { class: "who strong" }, "처음 한 번: 앱 설치"),
         ninjiInfo && ninjiInfo.version && h("span", { class: "who" }, `v${ninjiInfo.version} · ${(ninjiInfo.size / 1048576).toFixed(1)}MB`)),
-      step(1, "아래 [앱 받기]를 눌러 받은 파일을 열어요. '출처를 알 수 없는 앱'이라고 나오면 [설정] → 허용을 켜고 [설치]."),
+      step(1, "아래 [앱 받기]를 눌러 받은 파일을 열어요. 경고가 뜨거나 설치가 막히면 아래 '🚫 설치가 막힐 때'를 따라 해 주세요."),
       step(2, "'OTTOV 인지작업' 앱을 열고 [① 접근성에서 켜기] → 설치된 앱 → OTTOV 인지작업 → 켜기."),
       step(3, "안 켜지면(안드로이드 13 이상): 설정 → 애플리케이션 → OTTOV 인지작업 → 오른쪽 위 ⋮ → '제한된 설정 허용' 후 다시 켜기."),
       step(4, "여기로 돌아와 [▶ 인지작업 시작]을 누르면 돼요. 앱이 업데이트되면 [앱 받기]로 다시 받아 설치하면 그대로 이어져요."),
-      h("a", { class: "go", style: "text-align:center;text-decoration:none", href: ninjiApk(), download: "ottov-ninji.apk" }, "📲 앱 받기 (APK)"),
-      h("p", { class: "note", style: "margin-top:10px" }, "'Play 프로텍트'가 경고하면 [무시하고 설치]를 눌러 주세요. 다른 앱을 대신 움직이는 접근성 앱이라 경고가 나올 수 있어요. 스레드 앱 말고 다른 앱은 보지 않아요.")));
+      h("a", { class: "go", style: "text-align:center;text-decoration:none", href: ninjiApk(), download: "ottov-ninji.apk" }, "📲 앱 받기 (APK)")),
+    ninjiBlocked());
+}
+
+/** 설치가 막힐 때 (Play 프로텍트·삼성 자동 차단) */
+function ninjiBlocked() {
+  const li = (...t) => h("li", { style: "margin-top:6px" }, ...t);
+  const box = (title, open, ...kids) => h("details", { class: "item", style: "margin-top:10px", open: open || null },
+    h("summary", { style: "font-weight:800;cursor:pointer" }, title), ...kids);
+  const ol = (...items) => h("ol", { style: "margin:8px 0 0;padding-left:20px;font-size:13.5px;line-height:1.6" }, ...items);
+  const why = (t) => h("p", { class: "note", style: "margin-top:8px" }, t);
+  return h("div", { style: "margin-top:18px" },
+    h("div", { class: "label" }, h("span", null, "🚫 설치가 막힐 때")),
+    why("인지작업 앱은 플레이스토어 밖에서 받는 앱이고, 스레드 앱을 대신 움직이려고 '접근성' 권한을 써요. 그래서 구글이 확인하지 않은 앱으로 보고 경고하거나 막아요. 아래 순서대로 하면 설치돼요. 스레드 앱 말고 다른 앱은 보지 않고, 개인정보도 가져가지 않아요."),
+
+    box("① '앱 설치가 권장되지 않음'이 떠요", true,
+      ol(
+        li("경고 창 아래쪽의 ", h("b", null, "[자세히]"), " (또는 ˅ 화살표)를 눌러요."),
+        li(h("b", null, "[무시하고 설치]"), "를 눌러요."),
+        li("그래도 '기기 보호를 위해 앱 차단됨'이 뜨면 아래 ②번으로 가세요."))),
+
+    box("② '기기 보호를 위해 앱 차단됨'이 떠요 (가장 많이 막히는 곳)", true,
+      why("구글 'Play 프로텍트'가 막는 거예요. 설치하는 동안만 잠깐 끄고, 설치가 끝나면 바로 다시 켜요."),
+      ol(
+        li("차단 창은 ", h("b", null, "[확인]"), "으로 닫아요."),
+        li(h("b", null, "Play 스토어"), " 앱을 열어요."),
+        li("오른쪽 위 ", h("b", null, "내 프로필 동그라미"), "를 눌러요."),
+        li(h("b", null, "[Play 프로텍트]"), "를 눌러요."),
+        li("오른쪽 위 ", h("b", null, "⚙ 톱니바퀴(설정)"), "를 눌러요."),
+        li(h("b", null, "'Play 프로텍트로 앱 검사'"), "를 꺼요. '사용 중지할까요?'가 나오면 [사용 중지]."),
+        li("이 화면(폰 OTTOV → 인지작업)으로 돌아와 ", h("b", null, "[📲 앱 받기]"), "를 다시 눌러 설치해요. (이미 받은 파일이 있으면 '내 파일 → 다운로드'의 ottov-ninji.apk를 눌러도 돼요)"),
+        li("설치가 끝나면 Play 스토어 → 프로필 → Play 프로텍트 → ⚙ 에서 ", h("b", null, "'Play 프로텍트로 앱 검사'를 다시 켜요."))),
+      why("다시 켠 뒤 '유해한 앱'이라고 알림이 오면 [무시]나 [앱 유지]를 눌러 주세요. [삭제]를 누르면 인지작업 앱이 지워져요.")),
+
+    box("③ 삼성 폰: '자동 차단에 의해 차단됨'이 떠요", false,
+      why("삼성 갤럭시(One UI 6 이상)의 '자동 차단' 기능이 막는 거예요."),
+      ol(
+        li(h("b", null, "설정"), " → ", h("b", null, "보안 및 개인정보 보호"), " → ", h("b", null, "자동 차단"), "으로 가요."),
+        li(h("b", null, "자동 차단을 꺼요."), " (끌 때 본인 확인을 할 수 있어요)"),
+        li("[📲 앱 받기]로 다시 설치해요."),
+        li("설치가 끝나면 자동 차단을 다시 켜도 돼요. 이미 깔린 앱은 그대로 써져요."))),
+
+    box("④ '출처를 알 수 없는 앱'이라고 떠요", false,
+      ol(
+        li("창의 ", h("b", null, "[설정]"), "을 눌러요."),
+        li(h("b", null, "'이 출처 허용'"), "(크롬 또는 내 파일)을 켜요."),
+        li("뒤로 가기를 누르면 설치 화면으로 돌아와요. [설치]를 눌러요."))),
+
+    box("⑤ 설치는 됐는데 접근성이 안 켜져요 (회색으로 막혀 있어요)", false,
+      ol(
+        li(h("b", null, "설정"), " → ", h("b", null, "애플리케이션"), " → ", h("b", null, "OTTOV 인지작업"), "을 눌러요."),
+        li("오른쪽 위 ", h("b", null, "⋮"), " → ", h("b", null, "'제한된 설정 허용'"), "을 눌러요. (안 보이면 먼저 접근성에서 한 번 켜 보려고 눌러 본 뒤 다시 와요)"),
+        li("설정 → ", h("b", null, "접근성"), " → ", h("b", null, "설치된 앱"), " → ", h("b", null, "OTTOV 인지작업"), " → 켜기."))),
+
+    why("그래도 안 되면 막힌 화면을 캡처해서 OTTOV 판매자에게 보내 주세요."));
 }
 
 function render() {
