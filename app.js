@@ -794,6 +794,53 @@ function reuploadView() {
     h("p", { class: "note" }, "[✨ AI로 바꾸기]는 PC와 똑같이 숫자·재료는 그대로 두고 표현만 살짝 바꿔서 [글 쓰기]에 채워 줘요. 읽어 보고 올릴 시각을 골라 [재업로드 예약하기]를 누르면 예약돼요. PC가 꺼져 있어도 올라가요."));
 }
 
+// ── 인지작업 (안드로이드 전용): 'OTTOV 인지작업' 앱이 스레드 앱에서 키워드를 검색하고 결과를 훑어 내려 준다 ──
+const NINJI_KW = "ottov-m-ninji-kw";
+const NINJI_MIN = "ottov-m-ninji-min";
+const isAndroid = /Android/i.test(navigator.userAgent);
+const ninjiApk = () => new URL("ottov-ninji.apk", location.href).href;
+let ninjiInfo = null; // { version, size } (ottov-ninji.json)
+
+function startNinji() {
+  const kws = (store.get(NINJI_KW) || "").split(/[,\n，]/).map((s) => s.trim()).filter(Boolean).slice(0, 10);
+  if (!kws.length) return toast("키워드를 하나 이상 넣어 주세요.", true);
+  const min = Number(store.get(NINJI_MIN)) || 5;
+  const q = `kw=${encodeURIComponent(kws.join(","))}&min=${min}`;
+  // 앱이 있으면 앱이 열리고 바로 시작, 없으면 APK 받기로
+  location.href = `intent://start?${q}#Intent;scheme=ottovninji;package=com.ottov.ninji;S.browser_fallback_url=${encodeURIComponent(ninjiApk())};end`;
+}
+
+function ninjiView() {
+  if (!ninjiInfo) {
+    ninjiInfo = {};
+    fetch("ottov-ninji.json", { cache: "no-cache" }).then((r) => r.json()).then((j) => { ninjiInfo = j; if (S.tab === "ninji") render(); }).catch(() => {});
+  }
+  if (!isAndroid)
+    return h("div", { class: "empty" }, h("b", null, "안드로이드 폰 전용이에요"),
+      "아이폰은 다른 앱을 대신 움직이는 걸 애플이 막아 둬서 인지작업을 자동으로 할 수 없어요.");
+  const min = Number(store.get(NINJI_MIN)) || 5;
+  const step = (n, t) => h("p", { style: "margin:6px 0 0;font-size:13.5px" }, h("b", null, `${n}. `), t);
+  return h("div", null,
+    h("div", { class: "field" },
+      h("div", { class: "label" }, h("span", null, "검색할 키워드"), h("span", null, "쉼표로 나눠서, 최대 10개")),
+      h("textarea", { id: "ninji-kw", "aria-label": "인지작업 키워드", placeholder: "예: 다이소, 살림템, 주방템", value: store.get(NINJI_KW) || "", oninput: (e) => store.set(NINJI_KW, e.target.value) })),
+    h("div", { class: "field" },
+      h("div", { class: "label" }, h("span", null, "몇 분 동안")),
+      h("div", { class: "accounts" }, [3, 5, 10].map((m) =>
+        h("button", { class: "chip", "aria-pressed": String(min === m), onclick: () => { store.set(NINJI_MIN, String(m)); render(); } }, `${m}분`)))),
+    h("button", { class: "go", onclick: startNinji }, "▶ 인지작업 시작"),
+    h("p", { class: "note" }, "스레드 앱이 열리고 키워드를 하나씩 검색해서, 검색 결과를 사람처럼 불규칙하게 내려 보며 훑어봐요. 좋아요·팔로우·댓글은 누르지 않아요. 하는 동안 화면을 켜 두세요. 다른 앱으로 가거나 화면을 끄면 바로 멈춰요."),
+    h("div", { class: "item", style: "margin-top:18px" },
+      h("div", { class: "head" }, h("span", { class: "who strong" }, "처음 한 번: 앱 설치"),
+        ninjiInfo && ninjiInfo.version && h("span", { class: "who" }, `v${ninjiInfo.version} · ${(ninjiInfo.size / 1048576).toFixed(1)}MB`)),
+      step(1, "아래 [앱 받기]를 눌러 받은 파일을 열어요. '출처를 알 수 없는 앱'이라고 나오면 [설정] → 허용을 켜고 [설치]."),
+      step(2, "'OTTOV 인지작업' 앱을 열고 [① 접근성에서 켜기] → 설치된 앱 → OTTOV 인지작업 → 켜기."),
+      step(3, "안 켜지면(안드로이드 13 이상): 설정 → 애플리케이션 → OTTOV 인지작업 → 오른쪽 위 ⋮ → '제한된 설정 허용' 후 다시 켜기."),
+      step(4, "여기로 돌아와 [▶ 인지작업 시작]을 누르면 돼요. 앱이 업데이트되면 [앱 받기]로 다시 받아 설치하면 그대로 이어져요."),
+      h("a", { class: "go", style: "text-align:center;text-decoration:none", href: ninjiApk(), download: "ottov-ninji.apk" }, "📲 앱 받기 (APK)"),
+      h("p", { class: "note", style: "margin-top:10px" }, "'Play 프로텍트'가 경고하면 [무시하고 설치]를 눌러 주세요. 다른 앱을 대신 움직이는 접근성 앱이라 경고가 나올 수 있어요. 스레드 앱 말고 다른 앱은 보지 않아요.")));
+}
+
 function render() {
   const root = document.getElementById("app");
   const active = document.activeElement;
@@ -820,8 +867,10 @@ function mainView() {
       tab("write", "글 쓰기"),
       tab("list", "예약 목록", up > 0 && h("span", { class: "n" }, up)),
       tab("collect", "수집", waiting > 0 && h("span", { class: "n" }, waiting)),
-      tab("reupload", "재업로드", reTodo > 0 && h("span", { class: "n" }, reTodo))),
-    !S.loaded ? h("div", { class: "empty" }, S.loading ? "불러오는 중…" : "")
+      tab("reupload", "재업로드", reTodo > 0 && h("span", { class: "n" }, reTodo)),
+      tab("ninji", "인지작업")),
+    S.tab === "ninji" ? ninjiView()
+      : !S.loaded ? h("div", { class: "empty" }, S.loading ? "불러오는 중…" : "")
       : S.tab === "write" ? writeView() : S.tab === "collect" ? collectView() : S.tab === "reupload" ? reuploadView() : listView(),
     S.tab === "list" && h("div", { class: "foot" }, h("button", { onclick: forget }, "이 폰 연결 끊기")));
 }
