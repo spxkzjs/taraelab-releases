@@ -196,3 +196,9 @@ textarea.thread { min-height: 92px; resize: vertical; }
 #toast.on { opacity: 1; transform: none; }
 #toast.bad { background: var(--hot); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* 인지작업 탭이 생겨서 5칸 */
+.tabs { grid-template-columns: repeat(5, 1fr); }
+.tabs button { font-size: 13px; letter-spacing: -0.02em; }
+#ninji-kw { min-height: 84px; }
+
