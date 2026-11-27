@@ -829,7 +829,7 @@ function ninjiView() {
       h("div", { class: "accounts" }, [3, 5, 10].map((m) =>
         h("button", { class: "chip", "aria-pressed": String(min === m), onclick: () => { store.set(NINJI_MIN, String(m)); render(); } }, `${m}분`)))),
     h("button", { class: "go", onclick: startNinji }, "▶ 인지작업 시작"),
-    h("p", { class: "note" }, "스레드 앱이 열리고 키워드를 하나씩 검색해서, 검색 결과를 사람처럼 불규칙하게 내려 보며 훑어봐요. 좋아요·팔로우·댓글은 누르지 않아요. 하는 동안 화면을 켜 두세요. 다른 앱으로 가거나 화면을 끄면 바로 멈춰요."),
+    h("p", { class: "note" }, "스레드 앱이 열리고 키워드를 하나씩 검색해서, 검색 결과를 사람처럼 불규칙하게 내려 보며 훑어봐요. 매번 순서가 바뀌고, 키워드마다 보는 시간·속도도 달라요. 끝나기 전에 앞에서 본 키워드를 한 번 더 찾아보기도 해요. 시간에 비해 키워드가 많으면 그날은 몇 개만 골라서 하나당 40초 이상 봐요(5분이면 3~5개, 10개를 다 보려면 10분 추천). 좋아요·팔로우·댓글은 누르지 않아요. 하는 동안 화면을 켜 두세요. 다른 앱으로 가거나 화면을 끄면 바로 멈춰요."),
     h("div", { class: "item", style: "margin-top:18px" },
       h("div", { class: "head" }, h("span", { class: "who strong" }, "처음 한 번: 앱 설치"),
         ninjiInfo && ninjiInfo.version && h("span", { class: "who" }, `v${ninjiInfo.version} · ${(ninjiInfo.size / 1048576).toFixed(1)}MB`)),
