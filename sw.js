@@ -1,5 +1,5 @@
-// OTTOV 예약 (폰 웹앱): 화면 파일만 저장해 둔다. 예약·계정은 늘 서버에서 새로 받는다.
-const CACHE = "ottov-m-v5";
+﻿// OTTOV 예약 (폰 웹앱): 화면 파일만 저장해 둔다. 예약·계정은 늘 서버에서 새로 받는다.
+const CACHE = "ottov-m-v6";
 const SHELL = ["./", "index.html", "app.css", "app.js", "ai.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
